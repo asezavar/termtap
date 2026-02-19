@@ -1,0 +1,28 @@
+# Virtual environment
+.venv/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# Applications
+*.app
+
+# Logs
+*.log
+
+# Swap files
+*.swp
