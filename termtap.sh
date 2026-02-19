@@ -40,41 +40,111 @@ fi
 EVENT_TITLE="$1"
 EVENT_MSG="${2:-}"
 
+# --- Resolve the TTY for the current terminal session ---
+# If stdin is not a TTY (e.g., running as a hook from another CLI),
+# walk up the process tree to find an ancestor with a TTY.
+resolve_tty() {
+    # Try stdin first
+    local current_tty
+    current_tty=$(tty 2>/dev/null) || true
+
+    if [ -n "$current_tty" ] && [ "$current_tty" != "not a tty" ]; then
+        echo "$current_tty"
+        return
+    fi
+
+    # Walk up the process tree to find an ancestor with a TTY
+    local pid=$$
+    while [ "$pid" -gt 1 ] 2>/dev/null; do
+        # Get the controlling TTY for this PID via ps
+        local ancestor_tty
+        ancestor_tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+
+        if [ -n "$ancestor_tty" ] && [ "$ancestor_tty" != "??" ] && [ "$ancestor_tty" != "-" ]; then
+            echo "/dev/$ancestor_tty"
+            return
+        fi
+
+        # Move to parent PID
+        local ppid
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        if [ -z "$ppid" ] || [ "$ppid" = "$pid" ]; then
+            break
+        fi
+        pid="$ppid"
+    done
+
+    echo ""
+}
+
+CURRENT_TTY=$(resolve_tty)
+
+if [ -z "$CURRENT_TTY" ]; then
+    echo "Error: Could not determine terminal TTY." >&2
+    echo "Make sure you are running this from a terminal." >&2
+    exit 1
+fi
+
 # --- Get the window ID of the current Terminal.app window ---
+# Uses the resolved TTY to find the correct window, even if it's not frontmost.
 get_window_id() {
     local wid
-    wid=$(osascript -e '
-        tell application "Terminal"
-            set frontWindow to front window
-            return id of frontWindow
+    wid=$(osascript -e "
+        set currentTTY to \"$CURRENT_TTY\"
+        tell application \"Terminal\"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if tty of t is currentTTY then
+                        return id of w
+                    end if
+                end repeat
+            end repeat
         end tell
-    ' 2>/dev/null)
+        return \"\"
+    " 2>/dev/null)
 
     if [ -z "$wid" ]; then
-        echo "Error: Could not determine Terminal.app window ID." >&2
+        echo "Error: Could not find a Terminal.app window matching TTY $CURRENT_TTY." >&2
         echo "Make sure you are running this from Terminal.app." >&2
         exit 1
     fi
     echo "$wid"
 }
 
-# Use cached window ID if available (avoids re-querying on every event)
-if [ -z "${TERMINAL_FOCUS_WID:-}" ]; then
-    WINDOW_ID=$(get_window_id)
-    export TERMINAL_FOCUS_WID="$WINDOW_ID"
+# --- Cache the window ID in a temp file keyed by TTY ---
+# This persists across script invocations (unlike env vars in a subshell).
+CACHE_DIR="${TMPDIR:-/tmp}/termtap"
+mkdir -p "$CACHE_DIR"
+
+get_cache_file() {
+    # Convert tty path to a safe filename (e.g., /dev/ttys003 -> dev-ttys003)
+    local safe_name
+    safe_name=$(echo "$CURRENT_TTY" | sed 's|/|-|g; s|^-||')
+    echo "${CACHE_DIR}/${safe_name}"
+}
+
+CACHE_FILE=$(get_cache_file)
+
+if [ -f "$CACHE_FILE" ]; then
+    WINDOW_ID=$(cat "$CACHE_FILE")
 else
-    WINDOW_ID="$TERMINAL_FOCUS_WID"
+    WINDOW_ID=$(get_window_id)
+    echo "$WINDOW_ID" > "$CACHE_FILE"
 fi
 
-# --- Send the event via HTTP POST ---
-PAYLOAD=$(cat <<EOF
-{
-    "window_id": "$WINDOW_ID",
-    "event_title": "$EVENT_TITLE",
-    "event_msg": "$EVENT_MSG"
+# --- Build JSON payload safely ---
+# Escape backslashes, double quotes, and control characters for valid JSON.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"      # escape backslashes
+    s="${s//\"/\\\"}"      # escape double quotes
+    printf '%s' "$s"
 }
-EOF
-)
+
+PAYLOAD=$(printf '{"window_id":"%s","event_title":"%s","event_msg":"%s"}' \
+    "$(json_escape "$WINDOW_ID")" \
+    "$(json_escape "$EVENT_TITLE")" \
+    "$(json_escape "$EVENT_MSG")")
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     "http://${HOST}:${PORT}/" \
@@ -92,7 +162,7 @@ HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
 if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     if [ "$(echo "$EVENT_TITLE" | tr '[:upper:]' '[:lower:]')" = "terminate" ]; then
         echo "✓ Terminal removed from menu bar"
-        unset TERMINAL_FOCUS_WID
+        rm -f "$CACHE_FILE"
     else
         echo "✓ Event sent: ${EVENT_TITLE} — ${EVENT_MSG}"
     fi
