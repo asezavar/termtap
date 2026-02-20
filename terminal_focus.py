@@ -53,6 +53,12 @@ class SessionStore:
         with self._lock:
             self._sessions.pop(window_id, None)
 
+    def mark_seen(self, window_id: str):
+        """Mark a single session as seen."""
+        with self._lock:
+            if window_id in self._sessions:
+                self._sessions[window_id]["unseen"] = False
+
     def mark_all_seen(self):
         """Mark all sessions as seen."""
         with self._lock:
@@ -229,8 +235,8 @@ class TerminalFocusApp(rumps.App):
         """Create a click handler for a specific window."""
         def handler(sender):
             focus_terminal_window(window_id)
-            # Mark all as seen when user interacts
-            self.store.mark_all_seen()
+            # Mark only the clicked session as seen
+            self.store.mark_seen(window_id)
             self._rebuild_menu()
         return handler
 
@@ -241,7 +247,6 @@ class TerminalFocusApp(rumps.App):
     # rumps doesn't natively expose "menu opened" so we hook into it
     def _nsapp_delegate_menuWillOpen_(self, menu):
         """Called when the menu bar dropdown is opened."""
-        self.store.mark_all_seen()
         self._rebuild_menu()
 
 
@@ -265,7 +270,6 @@ def patch_menu_delegate(app):
 
             def menuWillOpen_(self, menu):
                 if self.app_ref:
-                    self.app_ref.store.mark_all_seen()
                     self.app_ref._rebuild_menu()
 
         delegate = MenuOpenDelegate.alloc().init()

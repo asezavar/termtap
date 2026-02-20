@@ -75,8 +75,63 @@ class TestSessionStoreRemove:
         assert store.count() == 0
 
 
+class TestSessionStoreMarkSeen:
+    """Tests for marking a single session as seen."""
+
+    def test_mark_seen_single_session(self):
+        store = SessionStore()
+        store.upsert("100", "build", "started")
+        store.upsert("200", "deploy", "staging")
+
+        store.mark_seen("100")
+
+        sessions = store.get_all()
+        assert sessions["100"]["unseen"] is False
+        assert sessions["200"]["unseen"] is True
+        assert store.has_unseen() is True
+
+    def test_mark_seen_all_individually(self):
+        store = SessionStore()
+        store.upsert("100", "build", "started")
+        store.upsert("200", "deploy", "staging")
+
+        store.mark_seen("100")
+        store.mark_seen("200")
+
+        assert store.has_unseen() is False
+
+    def test_mark_seen_nonexistent_is_noop(self):
+        store = SessionStore()
+        store.upsert("100", "build", "started")
+        store.mark_seen("999")  # should not raise
+
+        assert store.has_unseen() is True
+
+    def test_mark_seen_then_update_marks_unseen_again(self):
+        store = SessionStore()
+        store.upsert("100", "build", "started")
+        store.mark_seen("100")
+        assert store.get_all()["100"]["unseen"] is False
+
+        store.upsert("100", "build", "done")
+        assert store.get_all()["100"]["unseen"] is True
+
+    def test_mark_seen_does_not_affect_other_sessions(self):
+        store = SessionStore()
+        store.upsert("100", "build", "started")
+        store.upsert("200", "deploy", "staging")
+        store.upsert("300", "test", "running")
+
+        store.mark_seen("200")
+
+        sessions = store.get_all()
+        assert sessions["100"]["unseen"] is True
+        assert sessions["200"]["unseen"] is False
+        assert sessions["300"]["unseen"] is True
+
+
 class TestSessionStoreMarkAllSeen:
-    """Tests for marking sessions as seen."""
+    """Tests for marking all sessions as seen."""
 
     def test_mark_all_seen(self):
         store = SessionStore()

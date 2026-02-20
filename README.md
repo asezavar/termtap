@@ -16,6 +16,12 @@ A macOS menu bar app that lets you track and quickly focus your Terminal.app win
 - Python 3.9+ (pre-installed on modern macOS)
 - Terminal.app
 
+## Supported Terminals
+
+Currently, Termtap **only supports Terminal.app** (the default macOS terminal). Both the CLI (`termtap.sh`) and the menu bar app use AppleScript that communicates directly with Terminal.app to detect window IDs and bring windows to the front.
+
+Other terminal emulators such as iTerm2, Alacritty, Kitty, WezTerm, Warp, and Hyper are **not supported** at this time.
+
 ## Quick Start (Dev Mode)
 
 ```bash
